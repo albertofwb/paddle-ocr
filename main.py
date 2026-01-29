@@ -55,7 +55,9 @@ async def screenshot_ocr(
     click: bool = False,
     output_json: bool = False,
     save_screenshot: str = None,
-    wait_after_click: float = 0,
+    wait_after_click: float = 3,
+    expect_text: str = None,
+    expect_gone: str = None,
 ):
     """
     截取当前页面并 OCR 识别。
@@ -99,9 +101,42 @@ async def screenshot_ocr(
                     actual_x, actual_y = int(cx / dpr), int(cy / dpr)
                     await page.mouse.click(actual_x, actual_y)
                     print(f"已点击 ({actual_x}, {actual_y}) [DPR={dpr}]")
+                    
                     if wait_after_click > 0:
                         await asyncio.sleep(wait_after_click)
-                        print(f"等待 {wait_after_click}s")
+                        
+                        # 点击后验证：再次截图 + OCR
+                        await page.screenshot(path=screenshot_path, full_page=False)
+                        new_items = recognize(screenshot_path)
+                        new_texts_str = " ".join([i["text"] for i in new_items])
+                        new_texts_list = [i["text"] for i in new_items[:15]]
+                        
+                        print(f"📄 页面文字: {new_texts_list}")
+                        
+                        # 验证期望出现的文字
+                        if expect_text:
+                            if expect_text.lower() in new_texts_str.lower():
+                                print(f"✅ 验证成功: 找到 \"{expect_text}\"")
+                            else:
+                                print(f"❌ 验证失败: 未找到 \"{expect_text}\"")
+                                save_error_screenshot(screenshot_path, f"expect_failed_{expect_text}")
+                                sys.exit(1)
+                        
+                        # 验证期望消失的文字
+                        if expect_gone:
+                            if expect_gone.lower() not in new_texts_str.lower():
+                                print(f"✅ 验证成功: \"{expect_gone}\" 已消失")
+                            else:
+                                print(f"❌ 验证失败: \"{expect_gone}\" 仍在页面上")
+                                save_error_screenshot(screenshot_path, f"still_exists_{expect_gone}")
+                                sys.exit(1)
+                        
+                        # 默认检查目标文字是否消失
+                        if not expect_text and not expect_gone:
+                            if target.lower() in new_texts_str.lower():
+                                print(f"⚠️ 目标文字仍在页面上")
+                            else:
+                                print(f"✅ 目标文字已消失")
             else:
                 error_occurred = True
                 # 保存错误截图
@@ -265,8 +300,16 @@ def main():
   # 打开 URL 并 OCR
   %(prog)s https://example.com
 
+验证模式:
+  # 点击后验证期望文字出现
+  %(prog)s --cdp -t "Create" --click --expect "Issue created"
+  
+  # 点击后验证目标消失
+  %(prog)s --cdp -t "Submit" --click --expect-gone "Submit"
+
 错误处理:
   - 找不到目标文字时，自动保存截图到 /tmp/ocr-debug/
+  - 验证失败时，自动保存截图
   - 截图文件名包含时间戳和错误原因
   - 同时输出页面上识别到的所有文字帮助调试
         """
@@ -277,8 +320,12 @@ def main():
     parser.add_argument("-c", "--click", action="store_true", help="找到后点击 (需要 --cdp)")
     parser.add_argument("-j", "--json", action="store_true", help="JSON 输出")
     parser.add_argument("-s", "--save", metavar="PATH", help="保存截图到指定路径")
-    parser.add_argument("-w", "--wait", type=float, default=0, metavar="SEC",
-                       help="点击后等待秒数 (默认: 0)")
+    parser.add_argument("-w", "--wait", type=float, default=3, metavar="SEC",
+                       help="点击后等待秒数 (默认: 3)")
+    parser.add_argument("--expect", metavar="TEXT",
+                       help="期望点击后出现的文字 (验证成功)")
+    parser.add_argument("--expect-gone", metavar="TEXT",
+                       help="期望点击后消失的文字 (验证成功)")
     parser.add_argument("--cdp", nargs="?", const=DEFAULT_CDP_URL, metavar="URL",
                        help=f"连接已运行的浏览器 (默认: {DEFAULT_CDP_URL})")
     parser.add_argument("--debug-dir", default="/tmp/ocr-debug",
@@ -299,6 +346,8 @@ def main():
             output_json=args.json,
             save_screenshot=args.save,
             wait_after_click=args.wait,
+            expect_text=args.expect,
+            expect_gone=args.expect_gone,
         ))
     elif args.source:
         source = args.source
