@@ -1,16 +1,26 @@
+import argparse
 from paddleocr import PaddleOCR
 
-# Paddleocr目前支持的多语言语种可以通过修改lang参数进行切换
-# 例如`ch`, `en`, `fr`, `german`, `korean`, `japan`
-ocr = PaddleOCR(lang="ch", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False)
-img_path = 't1.jpg'
+parser = argparse.ArgumentParser(description="PaddleOCR 文字识别工具")
+parser.add_argument("image", nargs="?", default="t1.jpg", help="要识别的图片路径")
+parser.add_argument("-l", "--lang", default="ch", help="语言 (ch, en, fr, german, korean, japan)")
+args = parser.parse_args()
+
+ocr = PaddleOCR(
+    lang=args.lang,
+    use_doc_orientation_classify=False,
+    use_doc_unwarping=False,
+    use_textline_orientation=False,
+    enable_mkldnn=False,
+)
+img_path = args.image
 result = list(ocr.predict(img_path))
 
 for res in result:
-    if hasattr(res, 'keys'):
-        boxes = res.get('rec_polys', res.get('dt_polys', []))
-        txts = res.get('rec_texts', [])
-        scores = res.get('rec_scores', [])
+    if hasattr(res, "keys"):
+        boxes = res.get("rec_polys", res.get("dt_polys", []))
+        txts = res.get("rec_texts", [])
+        scores = res.get("rec_scores", [])
 
         for box, txt, score in zip(boxes, txts, scores):
             # box[0] 左上角, box[2] 右下角
