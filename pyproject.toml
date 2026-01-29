@@ -9,6 +9,7 @@ dependencies = [
     "pillow>=12.0",
     "paddlepaddle-gpu>=3.0.0",
     "opencv-python-headless>=4.13.0.90",
+    "playwright>=1.57.0",
 ]
 
 [tool.uv]
