@@ -6,12 +6,15 @@ OCR 浏览器自动化工具
 - 连接已运行的浏览器 (CDP)
 - 截图 + OCR + 点击
 - 本地图片 OCR
+- 出错时自动保存截图
 """
 import argparse
 import asyncio
 import json
 import tempfile
 import sys
+import shutil
+from datetime import datetime
 from pathlib import Path
 
 from playwright.async_api import async_playwright
@@ -20,6 +23,20 @@ from ocr import recognize, find_text, find_text_item
 
 # Clawdbot 默认 CDP 端口
 DEFAULT_CDP_URL = "http://127.0.0.1:18800"
+
+# 错误截图保存目录
+ERROR_SCREENSHOT_DIR = Path("/tmp/ocr-debug")
+
+
+def save_error_screenshot(screenshot_path: str, reason: str) -> str:
+    """保存错误截图到调试目录"""
+    ERROR_SCREENSHOT_DIR.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_reason = reason.replace(" ", "_").replace("/", "-")[:30]
+    dest = ERROR_SCREENSHOT_DIR / f"{timestamp}_{safe_reason}.png"
+    shutil.copy(screenshot_path, dest)
+    print(f"📸 截图已保存: {dest}", file=sys.stderr)
+    return str(dest)
 
 
 async def connect_browser(cdp_url: str = DEFAULT_CDP_URL):
@@ -37,6 +54,8 @@ async def screenshot_ocr(
     exact: bool = False,
     click: bool = False,
     output_json: bool = False,
+    save_screenshot: str = None,
+    wait_after_click: float = 0,
 ):
     """
     截取当前页面并 OCR 识别。
@@ -47,8 +66,11 @@ async def screenshot_ocr(
         exact: 精确匹配
         click: 找到后点击
         output_json: JSON 输出
+        save_screenshot: 保存截图到指定路径 (None=不保存)
     """
     p, browser, page = await connect_browser(cdp_url)
+    screenshot_path = None
+    error_occurred = False
     
     try:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
@@ -56,6 +78,11 @@ async def screenshot_ocr(
 
         # viewport 截图
         await page.screenshot(path=screenshot_path, full_page=False)
+        
+        # 如果指定了保存路径，复制一份
+        if save_screenshot:
+            shutil.copy(screenshot_path, save_screenshot)
+            print(f"📸 截图已保存: {save_screenshot}", file=sys.stderr)
 
         if target:
             item = find_text_item(screenshot_path, target, exact=exact)
@@ -66,11 +93,24 @@ async def screenshot_ocr(
                     print(f"找到 \"{item['text']}\" 坐标: {item['center']}")
                 
                 if click:
+                    # 获取 devicePixelRatio 校正坐标
+                    dpr = await page.evaluate("window.devicePixelRatio")
                     cx, cy = item["center"]
-                    await page.mouse.click(cx, cy)
-                    print(f"已点击 ({cx}, {cy})")
+                    actual_x, actual_y = int(cx / dpr), int(cy / dpr)
+                    await page.mouse.click(actual_x, actual_y)
+                    print(f"已点击 ({actual_x}, {actual_y}) [DPR={dpr}]")
+                    if wait_after_click > 0:
+                        await asyncio.sleep(wait_after_click)
+                        print(f"等待 {wait_after_click}s")
             else:
+                error_occurred = True
+                # 保存错误截图
+                saved = save_error_screenshot(screenshot_path, f"not_found_{target}")
+                # 输出所有识别到的文字帮助调试
+                items = recognize(screenshot_path)
+                texts = [i["text"] for i in items[:20]]
                 print(f"未找到 \"{target}\"", file=sys.stderr)
+                print(f"页面文字: {texts}", file=sys.stderr)
                 sys.exit(1)
         else:
             items = recognize(screenshot_path)
@@ -81,8 +121,14 @@ async def screenshot_ocr(
                     bbox = item["bbox"]
                     print(f"({bbox[0]},{bbox[1]}) ({bbox[2]},{bbox[3]}) | {item['text']}")
 
-        Path(screenshot_path).unlink()
+    except Exception as e:
+        error_occurred = True
+        if screenshot_path and Path(screenshot_path).exists():
+            save_error_screenshot(screenshot_path, f"error_{type(e).__name__}")
+        raise
     finally:
+        if screenshot_path and Path(screenshot_path).exists() and not error_occurred:
+            Path(screenshot_path).unlink()
         await p.stop()
 
 
@@ -99,6 +145,7 @@ async def ocr_and_click(
         成功返回点击坐标，失败返回 None
     """
     p, browser, page = await connect_browser(cdp_url)
+    screenshot_path = None
     
     try:
         if wait_ms > 0:
@@ -109,13 +156,23 @@ async def ocr_and_click(
 
         await page.screenshot(path=screenshot_path, full_page=False)
         item = find_text_item(screenshot_path, target, exact=exact)
-        Path(screenshot_path).unlink()
         
         if item:
+            # 获取 devicePixelRatio 校正坐标
+            dpr = await page.evaluate("window.devicePixelRatio")
             cx, cy = item["center"]
-            await page.mouse.click(cx, cy)
-            return (cx, cy)
-        return None
+            actual_x, actual_y = int(cx / dpr), int(cy / dpr)
+            await page.mouse.click(actual_x, actual_y)
+            Path(screenshot_path).unlink()
+            return (actual_x, actual_y)
+        else:
+            # 保存错误截图
+            save_error_screenshot(screenshot_path, f"click_failed_{target}")
+            return None
+    except Exception as e:
+        if screenshot_path and Path(screenshot_path).exists():
+            save_error_screenshot(screenshot_path, f"error_{type(e).__name__}")
+        raise
     finally:
         await p.stop()
 
@@ -196,14 +253,22 @@ def main():
   # 截取当前浏览器页面并 OCR (连接 Clawdbot)
   %(prog)s --cdp
   
-  # 查找并点击
+  # 查找并点击 (自动 DPR 校正)
   %(prog)s --cdp -t "发布" --click
   
   # 精确匹配 (避免 "Post" 匹配到 "posts")
   %(prog)s --cdp -t "Post" --exact --click
   
+  # 保存截图用于调试
+  %(prog)s --cdp -t "登录" --save /tmp/debug.png
+  
   # 打开 URL 并 OCR
   %(prog)s https://example.com
+
+错误处理:
+  - 找不到目标文字时，自动保存截图到 /tmp/ocr-debug/
+  - 截图文件名包含时间戳和错误原因
+  - 同时输出页面上识别到的所有文字帮助调试
         """
     )
     parser.add_argument("source", nargs="?", help="图片路径或 URL")
@@ -211,10 +276,19 @@ def main():
     parser.add_argument("-e", "--exact", action="store_true", help="精确匹配")
     parser.add_argument("-c", "--click", action="store_true", help="找到后点击 (需要 --cdp)")
     parser.add_argument("-j", "--json", action="store_true", help="JSON 输出")
+    parser.add_argument("-s", "--save", metavar="PATH", help="保存截图到指定路径")
+    parser.add_argument("-w", "--wait", type=float, default=0, metavar="SEC",
+                       help="点击后等待秒数 (默认: 0)")
     parser.add_argument("--cdp", nargs="?", const=DEFAULT_CDP_URL, metavar="URL",
                        help=f"连接已运行的浏览器 (默认: {DEFAULT_CDP_URL})")
+    parser.add_argument("--debug-dir", default="/tmp/ocr-debug",
+                       help="错误截图保存目录 (默认: /tmp/ocr-debug)")
     args = parser.parse_args()
 
+    # 设置错误截图目录
+    global ERROR_SCREENSHOT_DIR
+    ERROR_SCREENSHOT_DIR = Path(args.debug_dir)
+    
     # CDP 模式：截取当前页面
     if args.cdp:
         asyncio.run(screenshot_ocr(
@@ -223,6 +297,8 @@ def main():
             exact=args.exact,
             click=args.click,
             output_json=args.json,
+            save_screenshot=args.save,
+            wait_after_click=args.wait,
         ))
     elif args.source:
         source = args.source
