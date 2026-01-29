@@ -11,102 +11,59 @@
 ## 安装
 
 ```bash
-# 需要 Python 3.10 (Paddle 不支持 3.12)
-uv sync
+uv sync  # 需要 Python 3.10
 ```
 
-## 使用
-
-### 基础 OCR
+## 快速使用
 
 ```bash
-# 识别本地图片
-./ocr.sh screenshot.png
+./click.sh "发布"              # 静默点击 (省token)
+./click.sh "发布" -v           # 显示输出
+./click.sh "Post" --exact      # 精确匹配
+```
 
-# 查找特定文字
+## CLI
+
+```bash
+# 本地图片
+./ocr.sh screenshot.png
 ./ocr.sh screenshot.png -t "登录"
 
-# 精确匹配
-./ocr.sh screenshot.png -t "Post" --exact
-
-# JSON 输出
-./ocr.sh screenshot.png --json
-```
-
-### 连接浏览器 (CDP)
-
-```bash
-# 截取当前浏览器页面并 OCR
+# 浏览器 (CDP)
 ./ocr.sh --cdp
-
-# 查找文字
-./ocr.sh --cdp -t "发布"
-
-# 查找并点击！
 ./ocr.sh --cdp -t "发布" --click
+./ocr.sh --cdp -t "发布" -c -q    # 静默模式
+./ocr.sh --cdp -t "发布" -c -j    # JSON输出
 
-# 精确匹配点击 (避免 "Post" 匹配到 "118 posts")
-./ocr.sh --cdp -t "Post" --exact --click
-```
+# 多个相同文字 - 位置过滤
+./ocr.sh --cdp -t "发布" -c --region bottom   # 底部区域
+./ocr.sh --cdp -t "确定" -c --region right    # 右侧区域
 
-### 快捷点击
-
-```bash
-# 一键查找并点击
-./click.sh "发布"
-./click.sh "Post" --exact
-```
-
-### Python API
-
-```python
-from ocr import recognize, find_text, find_text_item
-
-# 识别所有文字
-items = recognize("screenshot.png")
-for item in items:
-    print(f"{item['center']} | {item['text']}")
-
-# 查找文字
-coord = find_text("screenshot.png", "登录")
-print(f"点击坐标: {coord}")
-
-# 获取完整信息
-item = find_text_item("screenshot.png", "登录", exact=True)
-print(f"文字: {item['text']}, 边界: {item['bbox']}, 中心: {item['center']}")
-```
-
-### 配合 Clawdbot
-
-```python
-import asyncio
-from main import ocr_and_click
-
-# 截图 + OCR + 点击
-coord = asyncio.run(ocr_and_click(
-    cdp_url="http://127.0.0.1:18800",
-    target="发布",
-    exact=True
-))
-if coord:
-    print(f"已点击 {coord}")
+# 多个相同文字 - 上下文匹配
+./ocr.sh --cdp -t "发布" -c --near "预览"     # 找"预览"旁边的"发布"
 ```
 
 ## 输出格式
 
+| 模式 | 成功 | 失败 |
+|------|------|------|
+| 默认 | `clicked:500,300` | `not_found:目标` |
+| JSON | `{"ok":true,"clicked":[500,300]}` | `{"ok":false,"error":"not_found","texts":[...]}` |
+| 静默(-q) | 无输出 (exit 0) | 错误信息 (exit 1) |
+
+## Python API
+
+```python
+from ocr import recognize, find_text_item
+
+items = recognize("screenshot.png")
+item = find_text_item("screenshot.png", "登录", exact=True)
 ```
-(x1,y1) (x2,y2) | 识别的文字
-```
 
-- `(x1,y1)`: 左上角坐标
-- `(x2,y2)`: 右下角坐标
-- 中心点 = `((x1+x2)/2, (y1+y2)/2)`
+## 踩坑
 
-## 踩坑记录
-
-1. **PaddlePaddle 安装**: 用 `uv` 管理依赖，比 pip 靠谱
-2. **Python 3.12**: 不支持！用 3.10
-3. **GPU vs CPU**: 几乎没区别，小任务 CPU 够用
+- Python 3.12 不支持，用 3.10
+- 用 `uv` 管理依赖
 
 ## License
 

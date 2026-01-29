@@ -98,24 +98,86 @@ def find_text(
 def find_text_item(
     img_path: str, 
     target: str, 
-    exact: bool = False
+    exact: bool = False,
+    region: str = None,
+    near: str = None,
+    img_size: tuple[int, int] = None,
 ) -> dict | None:
     """
     查找指定文字，返回完整信息。
+
+    Args:
+        img_path: 图片路径
+        target: 要查找的文字
+        exact: True 时精确匹配，False 时包含匹配
+        region: 位置过滤 - "top", "bottom", "left", "right", "center"
+        near: 上下文匹配 - 查找靠近此文字的目标
+        img_size: 图片尺寸 (width, height)，用于 region 计算
 
     Returns:
         dict with text, box, bbox, center, score，未找到返回 None
     """
     items = recognize(img_path)
     
+    # 获取图片尺寸用于 region 计算
+    if region and not img_size:
+        try:
+            from PIL import Image
+            with Image.open(img_path) as img:
+                img_size = img.size  # (width, height)
+        except:
+            pass
+    
+    # 如果有 near 参数，先找到参考文字的位置
+    near_center = None
+    if near:
+        for item in items:
+            if near.lower() in item["text"].lower():
+                near_center = item["center"]
+                break
+    
+    # 过滤和匹配
+    candidates = []
     for item in items:
+        # 文字匹配
         if exact:
-            if item["text"] == target:
-                return item
+            if item["text"] != target:
+                continue
         else:
-            if target.lower() in item["text"].lower():
-                return item
-    return None
+            if target.lower() not in item["text"].lower():
+                continue
+        
+        # 位置过滤
+        if region and img_size:
+            cx, cy = item["center"]
+            w, h = img_size
+            
+            if region == "top" and cy > h * 0.4:
+                continue
+            elif region == "bottom" and cy < h * 0.6:
+                continue
+            elif region == "left" and cx > w * 0.4:
+                continue
+            elif region == "right" and cx < w * 0.6:
+                continue
+            elif region == "center":
+                if not (w * 0.3 < cx < w * 0.7 and h * 0.3 < cy < h * 0.7):
+                    continue
+        
+        candidates.append(item)
+    
+    if not candidates:
+        return None
+    
+    # 如果有 near 参数，返回最近的候选
+    if near_center and len(candidates) > 1:
+        def distance(item):
+            cx, cy = item["center"]
+            nx, ny = near_center
+            return (cx - nx) ** 2 + (cy - ny) ** 2
+        candidates.sort(key=distance)
+    
+    return candidates[0]
 
 
 if __name__ == "__main__":

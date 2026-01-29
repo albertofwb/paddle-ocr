@@ -58,6 +58,9 @@ async def screenshot_ocr(
     wait_after_click: float = 3,
     expect_text: str = None,
     expect_gone: str = None,
+    quiet: bool = False,
+    region: str = None,
+    near: str = None,
 ):
     """
     截取当前页面并 OCR 识别。
@@ -87,65 +90,64 @@ async def screenshot_ocr(
             print(f"📸 截图已保存: {save_screenshot}", file=sys.stderr)
 
         if target:
-            item = find_text_item(screenshot_path, target, exact=exact)
+            item = find_text_item(screenshot_path, target, exact=exact, region=region, near=near)
             if item:
-                if output_json:
-                    print(json.dumps(item, ensure_ascii=False))
-                else:
-                    print(f"找到 \"{item['text']}\" 坐标: {item['center']}")
-                
+                cx, cy = item["center"]
+
                 if click:
                     # 获取 devicePixelRatio 校正坐标
                     dpr = await page.evaluate("window.devicePixelRatio")
-                    cx, cy = item["center"]
                     actual_x, actual_y = int(cx / dpr), int(cy / dpr)
                     await page.mouse.click(actual_x, actual_y)
-                    print(f"已点击 ({actual_x}, {actual_y}) [DPR={dpr}]")
-                    
+
                     if wait_after_click > 0:
                         await asyncio.sleep(wait_after_click)
-                        
+
                         # 点击后验证：再次截图 + OCR
                         await page.screenshot(path=screenshot_path, full_page=False)
                         new_items = recognize(screenshot_path)
                         new_texts_str = " ".join([i["text"] for i in new_items])
-                        new_texts_list = [i["text"] for i in new_items[:15]]
-                        
-                        print(f"📄 页面文字: {new_texts_list}")
-                        
+
                         # 验证期望出现的文字
                         if expect_text:
-                            if expect_text.lower() in new_texts_str.lower():
-                                print(f"✅ 验证成功: 找到 \"{expect_text}\"")
-                            else:
-                                print(f"❌ 验证失败: 未找到 \"{expect_text}\"")
+                            if expect_text.lower() not in new_texts_str.lower():
                                 save_error_screenshot(screenshot_path, f"expect_failed_{expect_text}")
+                                if output_json:
+                                    print(json.dumps({"ok": False, "error": "expect_failed", "expect": expect_text}, ensure_ascii=False))
+                                elif not quiet:
+                                    print(f"expect_failed:{expect_text}", file=sys.stderr)
                                 sys.exit(1)
-                        
+
                         # 验证期望消失的文字
                         if expect_gone:
-                            if expect_gone.lower() not in new_texts_str.lower():
-                                print(f"✅ 验证成功: \"{expect_gone}\" 已消失")
-                            else:
-                                print(f"❌ 验证失败: \"{expect_gone}\" 仍在页面上")
+                            if expect_gone.lower() in new_texts_str.lower():
                                 save_error_screenshot(screenshot_path, f"still_exists_{expect_gone}")
+                                if output_json:
+                                    print(json.dumps({"ok": False, "error": "still_exists", "text": expect_gone}, ensure_ascii=False))
+                                elif not quiet:
+                                    print(f"still_exists:{expect_gone}", file=sys.stderr)
                                 sys.exit(1)
-                        
-                        # 默认检查目标文字是否消失
-                        if not expect_text and not expect_gone:
-                            if target.lower() in new_texts_str.lower():
-                                print(f"⚠️ 目标文字仍在页面上")
-                            else:
-                                print(f"✅ 目标文字已消失")
+
+                    # 成功输出
+                    if output_json:
+                        print(json.dumps({"ok": True, "clicked": [actual_x, actual_y]}, ensure_ascii=False))
+                    elif not quiet:
+                        print(f"clicked:{actual_x},{actual_y}")
+                else:
+                    # 只查找不点击
+                    if output_json:
+                        print(json.dumps({"ok": True, "center": [cx, cy], "text": item["text"]}, ensure_ascii=False))
+                    elif not quiet:
+                        print(f"found:{cx},{cy}")
             else:
                 error_occurred = True
-                # 保存错误截图
-                saved = save_error_screenshot(screenshot_path, f"not_found_{target}")
-                # 输出所有识别到的文字帮助调试
+                save_error_screenshot(screenshot_path, f"not_found_{target}")
                 items = recognize(screenshot_path)
-                texts = [i["text"] for i in items[:20]]
-                print(f"未找到 \"{target}\"", file=sys.stderr)
-                print(f"页面文字: {texts}", file=sys.stderr)
+                texts = [i["text"] for i in items[:15]]
+                if output_json:
+                    print(json.dumps({"ok": False, "error": "not_found", "target": target, "texts": texts}, ensure_ascii=False))
+                elif not quiet:
+                    print(f"not_found:{target}", file=sys.stderr)
                 sys.exit(1)
         else:
             items = recognize(screenshot_path)
@@ -212,7 +214,7 @@ async def ocr_and_click(
         await p.stop()
 
 
-async def screenshot_and_ocr_url(url: str, target: str = None, output_json: bool = False):
+async def screenshot_and_ocr_url(url: str, target: str = None, output_json: bool = False, quiet: bool = False):
     """
     打开 URL 截图并 OCR（启动新浏览器）
     """
@@ -230,47 +232,61 @@ async def screenshot_and_ocr_url(url: str, target: str = None, output_json: bool
         if target:
             item = find_text_item(screenshot_path, target)
             if item:
+                cx, cy = item["center"]
                 if output_json:
-                    print(json.dumps(item, ensure_ascii=False))
-                else:
-                    print(f"找到 \"{item['text']}\" 坐标: {item['center']}")
+                    print(json.dumps({"ok": True, "center": [cx, cy], "text": item["text"]}, ensure_ascii=False))
+                elif not quiet:
+                    print(f"found:{cx},{cy}")
             else:
-                print(f"未找到 \"{target}\"", file=sys.stderr)
+                items = recognize(screenshot_path)
+                texts = [i["text"] for i in items[:15]]
+                if output_json:
+                    print(json.dumps({"ok": False, "error": "not_found", "target": target, "texts": texts}, ensure_ascii=False))
+                elif not quiet:
+                    print(f"not_found:{target}", file=sys.stderr)
+                sys.exit(1)
         else:
             items = recognize(screenshot_path)
             if output_json:
-                print(json.dumps(items, ensure_ascii=False, indent=2))
-            else:
+                simple = [{"text": i["text"], "center": i["center"]} for i in items]
+                print(json.dumps(simple, ensure_ascii=False))
+            elif not quiet:
                 for item in items:
-                    bbox = item["bbox"]
-                    print(f"({bbox[0]},{bbox[1]}) ({bbox[2]},{bbox[3]}) | {item['text']}")
+                    print(f"{item['center'][0]},{item['center'][1]}|{item['text']}")
 
         Path(screenshot_path).unlink()
         await browser.close()
 
 
-async def ocr_local_image(img_path: str, target: str = None, exact: bool = False, output_json: bool = False):
+async def ocr_local_image(img_path: str, target: str = None, exact: bool = False, output_json: bool = False, quiet: bool = False):
     """
     对本地图片进行 OCR
     """
     if target:
         item = find_text_item(img_path, target, exact=exact)
         if item:
+            cx, cy = item["center"]
             if output_json:
-                print(json.dumps(item, ensure_ascii=False))
-            else:
-                print(f"找到 \"{item['text']}\" 坐标: {item['center']}")
+                print(json.dumps({"ok": True, "center": [cx, cy], "text": item["text"]}, ensure_ascii=False))
+            elif not quiet:
+                print(f"found:{cx},{cy}")
         else:
-            print(f"未找到 \"{target}\"", file=sys.stderr)
+            items = recognize(img_path)
+            texts = [i["text"] for i in items[:15]]
+            if output_json:
+                print(json.dumps({"ok": False, "error": "not_found", "target": target, "texts": texts}, ensure_ascii=False))
+            elif not quiet:
+                print(f"not_found:{target}", file=sys.stderr)
             sys.exit(1)
     else:
         items = recognize(img_path)
         if output_json:
-            print(json.dumps(items, ensure_ascii=False, indent=2))
-        else:
+            # 精简输出：只保留 text 和 center
+            simple = [{"text": i["text"], "center": i["center"]} for i in items]
+            print(json.dumps(simple, ensure_ascii=False))
+        elif not quiet:
             for item in items:
-                bbox = item["bbox"]
-                print(f"({bbox[0]},{bbox[1]}) ({bbox[2]},{bbox[3]}) | {item['text']}")
+                print(f"{item['center'][0]},{item['center'][1]}|{item['text']}")
 
 
 def main():
@@ -279,39 +295,17 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 对本地图片 OCR
-  %(prog)s screenshot.png
-  
-  # 查找特定文字
-  %(prog)s screenshot.png -t "登录"
-  
-  # 截取当前浏览器页面并 OCR (连接 Clawdbot)
-  %(prog)s --cdp
-  
-  # 查找并点击 (自动 DPR 校正)
-  %(prog)s --cdp -t "发布" --click
-  
-  # 精确匹配 (避免 "Post" 匹配到 "posts")
-  %(prog)s --cdp -t "Post" --exact --click
-  
-  # 保存截图用于调试
-  %(prog)s --cdp -t "登录" --save /tmp/debug.png
-  
-  # 打开 URL 并 OCR
-  %(prog)s https://example.com
+  %(prog)s screenshot.png              # 本地图片 OCR
+  %(prog)s screenshot.png -t "登录"    # 查找文字
+  %(prog)s --cdp                       # 截取浏览器页面
+  %(prog)s --cdp -t "发布" --click     # 查找并点击
+  %(prog)s --cdp -t "发布" -c -q       # 静默点击 (省token)
+  %(prog)s --cdp -t "发布" -c -j       # JSON输出
 
-验证模式:
-  # 点击后验证期望文字出现
-  %(prog)s --cdp -t "Create" --click --expect "Issue created"
-  
-  # 点击后验证目标消失
-  %(prog)s --cdp -t "Submit" --click --expect-gone "Submit"
-
-错误处理:
-  - 找不到目标文字时，自动保存截图到 /tmp/ocr-debug/
-  - 验证失败时，自动保存截图
-  - 截图文件名包含时间戳和错误原因
-  - 同时输出页面上识别到的所有文字帮助调试
+输出格式:
+  默认: clicked:500,300 / found:500,300 / not_found:目标
+  JSON: {"ok":true,"clicked":[500,300]} / {"ok":false,"error":"not_found",...}
+  静默: 成功无输出(exit 0), 失败输出错误(exit 1)
         """
     )
     parser.add_argument("source", nargs="?", help="图片路径或 URL")
@@ -319,6 +313,7 @@ def main():
     parser.add_argument("-e", "--exact", action="store_true", help="精确匹配")
     parser.add_argument("-c", "--click", action="store_true", help="找到后点击 (需要 --cdp)")
     parser.add_argument("-j", "--json", action="store_true", help="JSON 输出")
+    parser.add_argument("-q", "--quiet", action="store_true", help="静默模式 (成功无输出)")
     parser.add_argument("-s", "--save", metavar="PATH", help="保存截图到指定路径")
     parser.add_argument("-w", "--wait", type=float, default=3, metavar="SEC",
                        help="点击后等待秒数 (默认: 3)")
@@ -328,6 +323,10 @@ def main():
                        help="期望点击后消失的文字 (验证成功)")
     parser.add_argument("--cdp", nargs="?", const=DEFAULT_CDP_URL, metavar="URL",
                        help=f"连接已运行的浏览器 (默认: {DEFAULT_CDP_URL})")
+    parser.add_argument("--region", choices=["top", "bottom", "left", "right", "center"],
+                       help="位置过滤：只在指定区域查找")
+    parser.add_argument("--near", metavar="TEXT",
+                       help="上下文匹配：查找靠近此文字的目标")
     parser.add_argument("--debug-dir", default="/tmp/ocr-debug",
                        help="错误截图保存目录 (默认: /tmp/ocr-debug)")
     args = parser.parse_args()
@@ -348,13 +347,16 @@ def main():
             wait_after_click=args.wait,
             expect_text=args.expect,
             expect_gone=args.expect_gone,
+            quiet=args.quiet,
+            region=args.region,
+            near=args.near,
         ))
     elif args.source:
         source = args.source
         if source.startswith("http://") or source.startswith("https://"):
-            asyncio.run(screenshot_and_ocr_url(source, args.target, args.json))
+            asyncio.run(screenshot_and_ocr_url(source, args.target, args.json, args.quiet))
         else:
-            asyncio.run(ocr_local_image(source, args.target, args.exact, args.json))
+            asyncio.run(ocr_local_image(source, args.target, args.exact, args.json, args.quiet))
     else:
         parser.print_help()
         sys.exit(1)
