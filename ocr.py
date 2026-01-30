@@ -189,6 +189,7 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--target", help="查找特定文字")
     parser.add_argument("-e", "--exact", action="store_true", help="精确匹配")
     parser.add_argument("-j", "--json", action="store_true", help="JSON 输出")
+    parser.add_argument("-T", "--text-only", action="store_true", help="仅输出文字，不含坐标")
     args = parser.parse_args()
 
     items = recognize(args.image)
@@ -206,6 +207,9 @@ if __name__ == "__main__":
     else:
         if args.json:
             print(json.dumps(items, ensure_ascii=False, indent=2))
+        elif args.text_only:
+            for item in items:
+                print(item['text'])
         else:
             for item in items:
                 bbox = item["bbox"]
