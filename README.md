@@ -60,6 +60,17 @@ items = recognize("screenshot.png")
 item = find_text_item("screenshot.png", "登录", exact=True)
 ```
 
+## OCR Server
+
+预加载模型的 HTTP 服务，避免每次调用都加载模型（~3s → ~0.6s）。
+
+```bash
+sudo systemctl start ocr-server
+sudo systemctl status ocr-server
+```
+
+> API 文档见 `API.md`（本地文件，不提交 git）
+
 ## 踩坑
 
 - Python 3.12 不支持，用 3.10

@@ -11,6 +11,17 @@
    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True uv run python main.py
    ```
 
+## OCR Server
+
+预加载模型的 GPU 加速 OCR 服务，推理速度 ~0.6s。
+
+```bash
+sudo systemctl start ocr-server
+sudo systemctl status ocr-server
+```
+
+`ocr.py` 自动检测 Server，可用时走 API，否则回退本地模型。API 文档见 `API.md`。
+
 ## CLI (for AI agents)
 
 ```bash
@@ -21,6 +32,9 @@
 # OCR
 ./ocr.sh screenshot.png -t "登录" -j   # JSON输出
 ./ocr.sh --cdp -t "发布" -c -q         # CDP静默点击
+
+# 强制本地模型 (不走 API)
+uv run python ocr.py image.png --local
 ```
 
 ## Output Format

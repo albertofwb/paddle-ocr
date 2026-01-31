@@ -10,6 +10,9 @@ dependencies = [
     "paddlepaddle-gpu>=3.0.0",
     "opencv-python-headless>=4.13.0.90",
     "playwright>=1.57.0",
+    "fastapi>=0.128.0",
+    "uvicorn>=0.40.0",
+    "httpx>=0.28.1",
 ]
 
 [tool.uv]

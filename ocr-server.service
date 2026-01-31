@@ -1,0 +1,15 @@
+[Unit]
+Description=PaddleOCR Server
+After=network.target
+
+[Service]
+Type=simple
+User=albert
+WorkingDirectory=/home/albert/paddle-ocr
+Environment="PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True"
+ExecStart=/home/albert/.local/bin/uv run uvicorn ocr_server:app --host 0.0.0.0 --port 8089
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
