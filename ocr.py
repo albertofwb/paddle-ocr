@@ -1,7 +1,7 @@
 """
 PaddleOCR 文字识别模块
 
-优先使用 OCR Server API，如果不可用则回退到本地模型。
+始终使用本地模型。
 """
 import os
 import json
@@ -10,20 +10,13 @@ import httpx
 
 OCR_SERVER_URL = os.environ.get("OCR_SERVER_URL", "http://127.0.0.1:8089")
 _ocr = None
-_use_api = None  # None=未检测, True=使用API, False=使用本地
+_use_api = False  # 固定使用本地
 
 
 def _check_server():
     """检查 OCR Server 是否可用"""
     global _use_api
-    if _use_api is not None:
-        return _use_api
-    try:
-        resp = httpx.get(f"{OCR_SERVER_URL}/health", timeout=1.0)
-        _use_api = resp.status_code == 200
-    except:
-        _use_api = False
-    return _use_api
+    return False
 
 
 def _get_local_ocr():
@@ -31,6 +24,12 @@ def _get_local_ocr():
     global _ocr
     if _ocr is None:
         os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+        import paddle
+        if not paddle.device.is_compiled_with_cuda():
+            raise RuntimeError("CUDA is not available; GPU is required.")
+        device = paddle.device.get_device()
+        if not device.startswith("gpu"):
+            raise RuntimeError(f"GPU device required, got: {device}")
         from paddleocr import PaddleOCR
         _ocr = PaddleOCR(
             use_doc_orientation_classify=False,
@@ -141,9 +140,9 @@ def find_text_item(
     img_path: str,
     target: str,
     exact: bool = False,
-    region: str = None,
-    near: str = None,
-    img_size: tuple[int, int] = None,
+    region: str | None = None,
+    near: str | None = None,
+    img_size: tuple[int, int] | None = None,
 ) -> dict | None:
     """
     查找指定文字，返回完整信息。

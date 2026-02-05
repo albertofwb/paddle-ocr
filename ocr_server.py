@@ -99,7 +99,72 @@ def recognize_image(img_path: str) -> list[dict]:
                     "center": [cx, cy],
                     "score": float(score),
                 })
+    items.sort(key=lambda item: (item["center"][1], item["center"][0]))
     return items
+
+
+def _build_text(items: list[dict]) -> str:
+    """按行聚类，行内按 x 排序，根据间距自动插空格"""
+    if not items:
+        return ""
+
+    # 计算行阈值：中位高度 * 0.6
+    heights = [item["bbox"][3] - item["bbox"][1] for item in items]
+    line_thresh = sorted(heights)[len(heights) // 2] * 0.6
+
+    # 按 y 聚类成行
+    sorted_by_y = sorted(items, key=lambda it: it["center"][1])
+    lines = []
+    current_line = []
+    current_line_y = 0.0
+
+    for item in sorted_by_y:
+        cy = item["center"][1]
+        if not current_line:
+            current_line = [item]
+            current_line_y = cy
+        elif abs(cy - current_line_y) <= line_thresh:
+            current_line.append(item)
+            current_line_y = sum(it["center"][1] for it in current_line) / len(current_line)
+        else:
+            lines.append(current_line)
+            current_line = [item]
+            current_line_y = cy
+    if current_line:
+        lines.append(current_line)
+
+    # 每行处理：按 x 排序，插空格
+    text_lines = []
+    for line_items in lines:
+        line_items.sort(key=lambda it: it["bbox"][0])
+
+        # 拼接，按间距插空格
+        parts = []
+        prev_bbox = None
+        for i, it in enumerate(line_items):
+            if i > 0 and prev_bbox is not None:
+                gap = it["bbox"][0] - prev_bbox[2]
+
+                # 计算平均块宽度和间距比
+                prev_width = prev_bbox[2] - prev_bbox[0]
+                curr_width = it["bbox"][2] - it["bbox"][0]
+                avg_block_width = (prev_width + curr_width) / 2
+
+                # 根据块大小选择不同的判断标准
+                if avg_block_width > 100:
+                    # 大块：用相对间距
+                    should_add_space = gap / avg_block_width > 0.2
+                else:
+                    # 小块：用绝对间距
+                    should_add_space = gap > 30
+
+                if should_add_space:
+                    parts.append(" ")
+            parts.append(it["text"])
+            prev_bbox = it["bbox"]
+        text_lines.append("".join(parts))
+
+    return "\n".join(text_lines)
 
 
 @app.get("/health")
@@ -113,7 +178,8 @@ async def ocr(req: OCRRequest):
     img_path = process_image(req.image, req.is_path)
     try:
         items = recognize_image(img_path)
-        return {"ok": True, "items": items}
+        text = _build_text(items)
+        return {"ok": True, "items": items, "text": text}
     finally:
         if not req.is_path:
             Path(img_path).unlink(missing_ok=True)
